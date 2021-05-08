@@ -11,13 +11,13 @@ enum {
   EMERGENCY_STOP //signal lost, stop the boat
 } mode;
 
-#define X_JOYSTICK_MID 108
-#define X_JOYSTICK_MIN 0
-#define X_JOYSTICK_MAX 230
+#define X_JOYSTICK_MID 125
+#define X_JOYSTICK_MIN 2
+#define X_JOYSTICK_MAX 245
 
-#define Y_JOYSTICK_MID 108
+#define Y_JOYSTICK_MID 127
 #define Y_JOYSTICK_MIN 10
-#define Y_JOYSTICK_MAX 220
+#define Y_JOYSTICK_MAX 235
 
 uint8_t scanI2CForMPU6050() {
   Wire.begin();
@@ -105,7 +105,14 @@ int joystickPos(ServoRemote &remote, uint8_t minval, uint8_t midval, uint8_t max
   return value;
 }
 
+float sign(float x) {
+  if(x < 0) return -1;
+  else if(x == 0) return 0;
+  else return 1;
+}
+
 unsigned long dt = 10000; //10 milliseconds
+float targetAngle; //zakres <-180, 180>
 
 void loop() {
 
@@ -113,36 +120,48 @@ void loop() {
 
   int x = joystickPos(xJoystick, X_JOYSTICK_MIN, X_JOYSTICK_MID, X_JOYSTICK_MAX),
       y = joystickPos(yJoystick, Y_JOYSTICK_MIN, Y_JOYSTICK_MID, Y_JOYSTICK_MAX);
-  bool hasSignal = xJoystick.hasSignal() && yJoystick.hasSignal();
+  // It appears the remote control receiver will output y=5 or y=6 when signal is lost
+  bool hasSignal = xJoystick.hasSignal() && yJoystick.hasSignal() && (yJoystick.read() > 8);
 
   // State machine
   switch(mode) {
     
     case ASSISTED:
+      mpu.Execute();
       if(hasSignal) {
-        leftMotor.setSpeedAndDir(x+y);
-        rightMotor.setSpeedAndDir(x-y);
+        leftMotor.setSpeedAndDir(y+x);
+        rightMotor.setSpeedAndDir(y-x);
       } else {
         Serial.print(F("Remote control signal lost, switching to autonomous mode.\n"));
         mode = AUTONOMOUS;
+        float curAngle = mpu.GetAngZ();
+        targetAngle = curAngle - sign(curAngle)*180;
       }
     break;
     
     case AUTONOMOUS:
+      mpu.Execute();
       if(hasSignal) {
         Serial.print(F("Detected remote control signal, switching to assisted mode.\n"));
         mode = ASSISTED;
       } else {
-        // TODO: return to base
-        leftMotor.setSpeedAndDir(0);
-        rightMotor.setSpeedAndDir(0);
+        float curAngle = mpu.GetAngZ();
+        //how much extra rotation is needed to reach targetAngle
+        // angleToReachTgt < 0 -> we need to rotate left
+        // angleToReachTgt > 0 -> we need to rotate right
+        int16_t angleToReachTgt = targetAngle - curAngle; 
+        if(angleToReachTgt < -180) angleToReachTgt += 360;
+        if(angleToReachTgt > 180) angleToReachTgt -= 360;
+
+        leftMotor.setSpeedAndDir(100-angleToReachTgt);
+        rightMotor.setSpeedAndDir(100+angleToReachTgt);
       }
     break;
 
     case MANUAL:
       if(hasSignal) {
-        leftMotor.setSpeedAndDir(x+y);
-        rightMotor.setSpeedAndDir(x-y);
+        leftMotor.setSpeedAndDir(y+x);
+        rightMotor.setSpeedAndDir(y-x);
       } else { 
         Serial.print(F("Remote control signal lost, stopping boat.\n"));
         mode = EMERGENCY_STOP;
@@ -163,14 +182,6 @@ void loop() {
   rightMotor.update(dt);
   xJoystick.update(dt);
   yJoystick.update(dt);
-
-  /*mpu.Execute();
-  Serial.print(mpu.GetAngX());
-  Serial.write(' ');
-  Serial.print(mpu.GetAngY());
-  Serial.write(' ');
-  Serial.print(mpu.GetAngZ());
-  Serial.write('\n');*/
 
   dt = micros() - t;
 }
