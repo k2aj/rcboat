@@ -21,6 +21,7 @@ enum {
 
 uint8_t scanI2CForMPU6050() {
   Wire.begin();
+  Serial.print(F("Scanning I2C bus.\n"));
   for(uint8_t address = 0x68; address <= 0x69; ++address) {
     Wire.beginTransmission(address);
     if(Wire.endTransmission() == 0)
@@ -45,17 +46,23 @@ void setup() {
   digitalWrite(GREEN_LED_PIN, LOW);
   digitalWrite(YELLOW_LED_PIN, LOW);
 
-  delay(1000);
-  
   Serial.begin(500000);
 
   Serial.print(F("Initializing remote control.\n"));
   xJoystick.begin([](){xJoystick.isr();});
   yJoystick.begin([](){yJoystick.isr();});
 
-  Serial.print(F("Scanning I2C bus... "));
-  uint8_t address = scanI2CForMPU6050();
-  if(address) {
+  auto t = millis();
+  do {
+    xJoystick.update(0);
+    yJoystick.update(0);
+  } while(millis() - t < 1000);
+
+  uint8_t address;
+  if(
+    !(xJoystick.hasSignal() && yJoystick.hasSignal()) && 
+    (address = scanI2CForMPU6050())
+  ) {
     Serial.print(F("Found MPU6050 at address 0x"));
     Serial.print(address, HEX);
     Serial.write('\n');
@@ -70,7 +77,9 @@ void setup() {
     Serial.print(F("Done.\n"));
     mode = ASSISTED;
   } else {
-    Serial.print(F("ERROR: MPU6050 not found, switching to manual mode.\n"));
+    if(address) Serial.print(F("Remote control signal detected"));
+    else Serial.print(F("ERROR: MPU6050 not found"));
+    Serial.print(F(", switching to manual mode.\n"));
     digitalWrite(RED_LED_PIN, HIGH);
     mode = MANUAL;
   }
